@@ -60,9 +60,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({ now, status, broadcast, calen
         <div className="flex items-center justify-center gap-4 mb-3">
           <i className={`fas fa-calendar-check ${isRefreshing ? 'fa-spin text-amber-400' : 'text-indigo-400'} text-2xl`}></i>
           <span className="text-xs font-black tracking-[0.5em] text-slate-500 uppercase">
-            {isRefreshing ? '同步中...' : '今日、明日與後天行程'}
+            {isRefreshing ? '正在同步最新行程...' : '今日、明日與後天行程 (點擊重新整理)'}
           </span>
-          {!isRefreshing && <i className="fas fa-sync-alt text-[10px] text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity"></i>}
         </div>
         <div className="text-2xl md:text-3xl font-medium text-slate-200 leading-relaxed tracking-wide whitespace-pre-line text-left md:text-center">
           {calendarEvents}

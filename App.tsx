@@ -68,7 +68,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           action: "query_calendar", 
-          query: "請查詢我的行事曆，給我今天、明天與後天的全部行程。輸出的結果請分為三行呈現：\n今日行程：\n明日行程：\n後天行程：",
+          query: "請查詢我的行事曆，給我今天、明天與後天的全部行程。輸出的結果請務必分為三行呈現，格式如下：\n今日行程：[內容]\n明日行程：[內容]\n後天行程：[內容]",
           time: new Date().toISOString() 
         })
       });
@@ -89,7 +89,7 @@ export default function App() {
       setCalendarEvents(result);
     } catch (error) {
       console.error("行事曆獲取失敗:", error);
-      setCalendarEvents("無法連線行事曆系統，請點擊區塊重試。");
+      setCalendarEvents("無法連線行事曆系統，請點擊重試。");
     } finally {
       setIsRefreshingCalendar(false);
     }
@@ -151,7 +151,7 @@ export default function App() {
     const timer = setInterval(() => {
       const d = new Date();
       setNow(d);
-      // 凌晨三點整重新整理行事曆 (03:00:00)
+      // 凌晨三點整重新整理 (03:00:00)
       if (d.getHours() === 3 && d.getMinutes() === 0 && d.getSeconds() === 0) {
         fetchCalendarEvents();
       }
