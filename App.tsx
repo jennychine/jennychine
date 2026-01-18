@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import MainDisplay from './components/MainDisplay';
@@ -10,6 +9,7 @@ import BubbleBackground from './components/BubbleBackground';
 import { TimeSlot, TimetableData, BroadcastTemplate } from './types';
 
 const SHEET_URL = "https://docs.google.com/spreadsheets/d/1GPi-84ocA56qJrzGoN6ocmt27Fmc1iHJ-qxScqsHVvE/export?format=csv";
+const N8N_WEBHOOK_URL = "https://a3g.app.n8n.cloud/webhook/sch_wh";
 
 const DEFAULT_SLOTS: TimeSlot[] = [
   { id: '1', name: '第一節', start: '08:10', end: '09:00' },
@@ -36,6 +36,8 @@ const DEFAULT_TEMPLATES: BroadcastTemplate[] = [
 export default function App() {
   const [now, setNow] = useState(new Date());
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isRefreshingCalendar, setIsRefreshingCalendar] = useState(false);
+  const [calendarEvents, setCalendarEvents] = useState<string>('正在獲取今日校務行事曆...');
   
   const [slots, setSlots] = useState<TimeSlot[]>(() => {
     const saved = localStorage.getItem('slots');
@@ -56,6 +58,42 @@ export default function App() {
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isTravelModalOpen, setIsTravelModalOpen] = useState(false);
+
+  const fetchCalendarEvents = useCallback(async () => {
+    setIsRefreshingCalendar(true);
+    setCalendarEvents("正在同步最新行程...");
+    try {
+      const response = await fetch(N8N_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: "query_calendar", 
+          query: "請查詢我的行事曆，給我今天、明天與後天的全部行程。輸出的結果請分為三行呈現：\n今日行程：\n明日行程：\n後天行程：",
+          time: new Date().toISOString() 
+        })
+      });
+      if (!response.ok) throw new Error("Webhook 請求失敗");
+      
+      const data = await response.json();
+      
+      let result = "本日尚無重要行事。";
+      if (typeof data === 'string') {
+        result = data;
+      } else if (Array.isArray(data)) {
+        const first = data[0];
+        result = first.output || first.text || first.message || JSON.stringify(first);
+      } else {
+        result = data.output || data.text || data.message || data.result || JSON.stringify(data);
+      }
+      
+      setCalendarEvents(result);
+    } catch (error) {
+      console.error("行事曆獲取失敗:", error);
+      setCalendarEvents("無法連線行事曆系統，請點擊區塊重試。");
+    } finally {
+      setIsRefreshingCalendar(false);
+    }
+  }, []);
 
   const syncWithGoogleSheet = useCallback(async (silent = false) => {
     setIsSyncing(true);
@@ -110,10 +148,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000);
+    const timer = setInterval(() => {
+      const d = new Date();
+      setNow(d);
+      // 凌晨三點整重新整理行事曆 (03:00:00)
+      if (d.getHours() === 3 && d.getMinutes() === 0 && d.getSeconds() === 0) {
+        fetchCalendarEvents();
+      }
+    }, 1000);
+    
     syncWithGoogleSheet(true);
+    fetchCalendarEvents();
     return () => clearInterval(timer);
-  }, [syncWithGoogleSheet]);
+  }, [syncWithGoogleSheet, fetchCalendarEvents]);
 
   useEffect(() => {
     localStorage.setItem('slots', JSON.stringify(slots));
@@ -190,6 +237,9 @@ export default function App() {
             now={now} 
             status={getStatus()} 
             broadcast={broadcast} 
+            calendarEvents={calendarEvents}
+            isRefreshing={isRefreshingCalendar}
+            onRefreshCalendar={fetchCalendarEvents}
             onCloseBroadcast={() => setBroadcast(null)} 
           />
         </div>
