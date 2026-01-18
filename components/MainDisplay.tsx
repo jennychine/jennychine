@@ -51,28 +51,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({ now, status, broadcast, calen
         {timeStr}
       </div>
 
-      {/* 可點擊的行事曆區塊 */}
+      {/* 手動刷新按鈕與行事曆顯示區 */}
       <button 
         onClick={onRefreshCalendar}
         disabled={isRefreshing}
-        className={`group relative max-w-4xl w-full mb-12 px-10 py-6 bg-black/20 backdrop-blur-md border border-white/5 rounded-[2.5rem] shadow-inner transition-all duration-300 hover:scale-[1.02] hover:bg-black/30 active:scale-95 cursor-pointer disabled:cursor-wait ${isRefreshing ? 'animate-pulse' : ''}`}
-      >
-        <div className="flex items-center justify-center gap-4 mb-3">
-          <i className={`fas fa-calendar-check ${isRefreshing ? 'fa-spin text-amber-400' : 'text-indigo-400'} text-2xl`}></i>
-          <span className="text-xs font-black tracking-[0.5em] text-slate-500 uppercase">
-            {isRefreshing ? '正在同步最新行程...' : '今日、明日與後天行程 (點擊重新整理)'}
-          </span>
-        </div>
-        <div className="text-2xl md:text-3xl font-medium text-slate-200 leading-relaxed tracking-wide whitespace-pre-line text-left md:text-center">
-          {calendarEvents}
-        </div>
-      </button>
-
-      <div className="text-5xl text-slate-500 font-light tracking-widest px-12 py-4 bg-white/2 rounded-full border border-white/5">
-        {dateStr}
-      </div>
-    </div>
-  );
-};
-
-export default MainDisplay;
+        className={`group relative max-w-4xl w-full mb-12 px-10 py-6 bg-black/20 backdrop-blur-md border border-white/5 rounded-[2.5rem] shadow-
