@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import MainDisplay from './components/MainDisplay';
 import Toolbar from './components/Toolbar';
@@ -39,6 +39,9 @@ export default function App() {
   const [isRefreshingCalendar, setIsRefreshingCalendar] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<string>('正在獲取今日校務行事曆...');
   
+  // 使用 useRef 來防止 fetch 過程中的重複請求，且不會觸發重新渲染導致的 identity 變化
+  const isFetchingRef = useRef(false);
+
   const [slots, setSlots] = useState<TimeSlot[]>(() => {
     const saved = localStorage.getItem('slots');
     return saved ? JSON.parse(saved) : DEFAULT_SLOTS;
@@ -60,20 +63,28 @@ export default function App() {
   const [isTravelModalOpen, setIsTravelModalOpen] = useState(false);
 
   const fetchCalendarEvents = useCallback(async () => {
-    if (isRefreshingCalendar) return;
+    if (isFetchingRef.current) return;
+    
+    isFetchingRef.current = true;
     setIsRefreshingCalendar(true);
     setCalendarEvents("正在同步最新行程...");
+
     try {
       const response = await fetch(N8N_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           action: "query_calendar", 
-          query: "請查詢我的行事曆，給我今天、明天與後天的全部行程。輸出的結果請分為三行呈現：\n今日行程：\n明日行程：\n後天行程：",
+          query: "請查詢我的行事曆，給我今天、明天與後天的全部行程。輸出的結果請務必包含今日、明日與後天，並適當換行呈現。",
           time: new Date().toISOString() 
-        })
+        }),
+        mode: 'cors',
+        cache: 'no-cache'
       });
-      if (!response.ok) throw new Error("Webhook 請求失敗");
+      
+      if (!response.ok) {
+        throw new Error(`伺服器回應錯誤: ${response.status}`);
+      }
       
       const data = await response.json();
       
@@ -83,18 +94,25 @@ export default function App() {
       } else if (Array.isArray(data)) {
         const first = data[0];
         result = first.output || first.text || first.message || JSON.stringify(first);
-      } else {
+      } else if (data) {
         result = data.output || data.text || data.message || data.result || JSON.stringify(data);
       }
       
       setCalendarEvents(result);
-    } catch (error) {
+    } catch (error: any) {
       console.error("行事曆獲取失敗:", error);
-      setCalendarEvents("目前無法取得校務行事曆內容，請稍後點擊重試。");
+      let errorMsg = "目前無法連線至行事曆系統。";
+      if (error.message === "Failed to fetch") {
+        errorMsg = "連連線失敗 (Failed to fetch)。\n請確認 n8n Webhook 是否允許來自此網域的 CORS 請求。";
+      } else {
+        errorMsg = `獲取失敗: ${error.message}`;
+      }
+      setCalendarEvents(errorMsg);
     } finally {
       setIsRefreshingCalendar(false);
+      isFetchingRef.current = false;
     }
-  }, [isRefreshingCalendar]);
+  }, []);
 
   const syncWithGoogleSheet = useCallback(async (silent = false) => {
     setIsSyncing(true);
@@ -138,7 +156,6 @@ export default function App() {
       if (newSlots.length > 0) {
         setSlots(newSlots);
         setTimetable(newTimetable);
-        if (!silent) console.log("Google 試算表同步成功");
       }
     } catch (error) {
       console.error("同步失敗:", error);
@@ -148,20 +165,26 @@ export default function App() {
     }
   }, []);
 
+  // 初始化邏輯：只在組件掛載時執行一次
+  useEffect(() => {
+    syncWithGoogleSheet(true);
+    fetchCalendarEvents();
+  }, []); // 空陣列確保只跑一次
+
+  // 時鐘邏輯
   useEffect(() => {
     const timer = setInterval(() => {
       const d = new Date();
       setNow(d);
+      
       // 凌晨三點整重新整理行事曆 (03:00:00)
       if (d.getHours() === 3 && d.getMinutes() === 0 && d.getSeconds() === 0) {
         fetchCalendarEvents();
       }
     }, 1000);
     
-    syncWithGoogleSheet(true);
-    fetchCalendarEvents();
     return () => clearInterval(timer);
-  }, [syncWithGoogleSheet, fetchCalendarEvents]);
+  }, [fetchCalendarEvents]);
 
   useEffect(() => {
     localStorage.setItem('slots', JSON.stringify(slots));
