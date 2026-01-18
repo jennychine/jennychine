@@ -1,6 +1,6 @@
 {
   "name": "Dr. Luarn Classroom Tool",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "具備 Google 試算表同步與多檔案組件架構的教室資訊看板。",
   "requestFramePermissions": []
 }
