@@ -1,0 +1,1543 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>欒老師 Dr. Luarn - 智慧互動資訊看板</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;500;800&family=JetBrains+Mono:wght@700&family=Noto+Sans+TC:wght@300;500;900&display=swap" rel="stylesheet">
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <style>
+        :root { --bg-deep: #020617; }
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #000000;
+            color: white;
+            margin: 0; padding: 0; overflow: hidden; height: 100vh; width: 100vw;
+        }
+        
+        /* 背景層級管理 */
+        .bg-layer {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            transition: opacity 0.8s ease-in-out; /* 平滑切換動畫 */
+        }
+        
+        .glass-texture {
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.02) 100%);
+            backdrop-filter: blur(20px);
+        }
+        
+        .btn-3d {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 8px 0 rgba(0,0,0,0.2), 0 15px 20px rgba(0,0,0,0.3);
+        }
+        .btn-3d:active {
+            transform: translateY(4px);
+            box-shadow: 0 4px 0 rgba(0,0,0,0.2), 0 5px 10px rgba(0,0,0,0.3);
+        }
+
+        /* 視覺反饋動畫 */
+        @keyframes flash-feedback {
+            0% { background-color: rgba(255,255,255,0.1); }
+            50% { background-color: rgba(255, 0, 100, 0.5); }
+            100% { background-color: rgba(255,255,255,0.1); }
+        }
+        .color-changed { animation: flash-feedback 0.3s ease-out; }
+
+        /* 文字變色動畫 */
+        @keyframes pastel-shift {
+            0%, 100% { color: #ffffff !important; text-shadow: 0 0 30px rgba(255,255,255,0.6); }
+            16% { color: #ff1493 !important; text-shadow: 0 0 40px rgba(255,20,147,0.9); }
+            33% { color: #ffd700 !important; text-shadow: 0 0 40px rgba(255,215,0,0.9); }
+            50% { color: #00bfff !important; text-shadow: 0 0 40px rgba(0,191,255,0.9); }
+            66% { color: #00ff7f !important; text-shadow: 0 0 40px rgba(0,255,127,0.9); }
+            83% { color: #ff6347 !important; text-shadow: 0 0 40px rgba(255,99,71,0.9); }
+        }
+        
+        /* 讓 Three.js Canvas 在手機上也正常顯示 */
+        canvas { display: block !important; }
+        #video-input { display: none; }
+        
+        /* 響應式調整 */
+        @media (max-width: 768px) {
+            .title-area { position: relative !important; top: 0 !important; left: 0 !important; right: 0 !important; }
+            .avatar-box { position: relative !important; top: 0 !important; left: 0 !important; width: 100% !important; display: flex !important; justify-content: center !important; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+        
+        // Constants
+        const SHEET_URL = "https://docs.google.com/spreadsheets/d/1GPi-84ocA56qJrzGoN6ocmt27Fmc1iHJ-qxScqsHVvE/export?format=csv";
+        const N8N_WEBHOOK_URL = "https://a3g.app.n8n.cloud/webhook/sch_wh";
+        const DAYS_ZH = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+        
+        const DEFAULT_SLOTS = [
+          { id: '1', name: '第一節', start: '08:10', end: '09:00' },
+          { id: '2', name: '第二節', start: '09:10', end: '10:00' },
+          { id: '3', name: '第三節', start: '10:20', end: '11:10' },
+          { id: '4', name: '第四節', start: '11:20', end: '12:10' },
+          { id: '5', name: '第五節', start: '12:20', end: '13:10' },
+          { id: '6', name: '第六節', start: '13:20', end: '14:10' },
+          { id: '7', name: '第七節', start: '14:20', end: '15:10' },
+          { id: '8', name: '第八節', start: '15:30', end: '16:20' },
+          { id: '9', name: '第九節', start: '16:30', end: '17:20' },
+          { id: '10', name: '第十節', start: '17:30', end: '18:20' },
+          { id: '11', name: '第A節', start: '18:25', end: '19:15' },
+          { id: '12', name: '第B節', start: '19:20', end: '20:10' },
+          { id: '13', name: '第C節', start: '20:15', end: '21:05' },
+        ];
+
+        const DEFAULT_TEMPLATES = [
+          { id: '1', btnName: '下課休息', title: '下課時間', subtitle: '離開教室請注意安全' },
+          { id: '2', btnName: '安靜午休', title: '午休時間', subtitle: '請保持安靜，安靜午睡' },
+          { id: '3', btnName: '打掃時間', title: '環境清掃', subtitle: '維護校園整潔，大家動起來' },
+        ];
+
+        // Bubble Background Logic (Pure JS for Canvas)
+        class BubbleSystem {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.bubbles = [];
+                this.resize();
+                this.init();
+            }
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+            init() {
+                this.bubbles = [];
+                const count = Math.floor((window.innerWidth * window.innerHeight) / 40000); 
+                for (let i = 0; i < Math.max(count, 18); i++) this.bubbles.push(new Bubble(this.canvas));
+            }
+            animate() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.bubbles.forEach(b => { b.update(); b.draw(this.ctx); });
+            }
+        }
+
+        class Bubble {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.colors = ['79, 70, 229', '124, 58, 237', '37, 99, 235', '219, 39, 119', '5, 150, 105', '245, 158, 11', '239, 68, 68'];
+                this.reset(true);
+            }
+            reset(initial = false) {
+                this.x = Math.random() * this.canvas.width;
+                this.y = initial ? Math.random() * this.canvas.height : this.canvas.height + 200;
+                this.radius = Math.random() * 250 + 150; 
+                this.speedX = Math.random() * 0.6 - 0.3;
+                this.speedY = -(Math.random() * 0.5 + 0.3); 
+                this.opacity = Math.random() * 0.3 + 0.4; 
+                this.rgb = this.colors[Math.floor(Math.random() * this.colors.length)];
+            }
+            update() {
+                this.x += this.speedX; this.y += this.speedY;
+                if (this.y < -this.radius) this.reset();
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.beginPath();
+                const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
+                g.addColorStop(0, `rgba(${this.rgb}, ${this.opacity})`);
+                g.addColorStop(0.5, `rgba(${this.rgb}, ${this.opacity * 0.4})`);
+                g.addColorStop(1, `rgba(${this.rgb}, 0)`);
+                ctx.fillStyle = g;
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                // Highlight
+                ctx.beginPath();
+                ctx.arc(this.x - this.radius * 0.3, this.y - this.radius * 0.3, this.radius * 0.08, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity * 0.5})`; 
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // Unified Interactive Background Component
+        function UnifiedBackground() {
+            const bubbleCanvasRef = useRef(null);
+            const threeContainerRef = useRef(null);
+            const miniHandCanvasRef = useRef(null);
+            const videoRef = useRef(null);
+            
+            const [status, setStatus] = useState("初始化...");
+            const [gesture, setGesture] = useState("等待手勢");
+            const [currentShape, setCurrentShape] = useState("FIREWORKS");
+            const [isActive, setIsActive] = useState(false); // 控制背景切換的關鍵狀態
+
+            useEffect(() => {
+                // --- 1. Init Bubble Background ---
+                const bubbleSys = new BubbleSystem(bubbleCanvasRef.current);
+                let bubbleAnimId;
+                const renderBubbles = () => {
+                    bubbleSys.animate();
+                    bubbleAnimId = requestAnimationFrame(renderBubbles);
+                };
+                renderBubbles();
+                
+                const handleResize = () => bubbleSys.resize();
+                window.addEventListener('resize', handleResize);
+
+                // --- 2. Init Three.js Particles ---
+                let renderer, scene, camera, particles, geometry;
+                let particleAnimId;
+                const particleCount = 4500;
+                const targetPositions = new Float32Array(particleCount * 3);
+                let handScale = 1.0;
+
+                const initThree = () => {
+                    const container = threeContainerRef.current;
+                    scene = new THREE.Scene();
+                    scene.fog = new THREE.FogExp2(0x000000, 0.003);
+                    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                    camera.position.z = 35;
+                    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                    
+                    // Clear and append
+                    while(container.firstChild) container.removeChild(container.firstChild);
+                    container.appendChild(renderer.domElement);
+
+                    // Geometry
+                    geometry = new THREE.BufferGeometry();
+                    const positions = new Float32Array(particleCount * 3);
+                    const colors = new Float32Array(particleCount * 3);
+                    const tempColor = new THREE.Color();
+
+                    for (let i = 0; i < particleCount * 3; i++) {
+                        positions[i] = (Math.random() - 0.5) * 60;
+                        targetPositions[i] = positions[i];
+                        tempColor.setHSL(0.5 + Math.random() * 0.1, 0.8, 0.5);
+                        colors[i] = tempColor.r; colors[i+1] = tempColor.g; colors[i+2] = tempColor.b;
+                    }
+                    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+                    const material = new THREE.PointsMaterial({
+                        size: 0.4, vertexColors: true, blending: THREE.AdditiveBlending,
+                        depthTest: false, transparent: true, opacity: 0.8
+                    });
+                    particles = new THREE.Points(geometry, material);
+                    scene.add(particles);
+                };
+                initThree();
+
+                // Shapes Logic
+                const shapes = {
+                    heart: (i) => {
+                        const t = Math.random() * Math.PI * 2;
+                        const x = 16 * Math.pow(Math.sin(t), 3);
+                        const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+                        const z = (Math.random() - 0.5) * 6;
+                        return [x * 0.6, y * 0.6, z];
+                    },
+                    flower: (i) => {
+                        const spread = 0.6; const angle = 137.5 * (Math.PI / 180) * i; const r = spread * Math.sqrt(i);
+                        return [r * Math.cos(angle), r * Math.sin(angle), Math.sin(r * 0.4) * 8];
+                    },
+                    saturn: (i) => {
+                        const isRing = Math.random() > 0.5;
+                        if (isRing) {
+                            const angle = Math.random() * Math.PI * 2; const r = 14 + Math.random() * 6;
+                            return [r * Math.cos(angle), r * Math.sin(angle) * 0.15, r * Math.sin(angle) * 0.8];
+                        } else {
+                            const r = 9; const theta = Math.random() * Math.PI * 2; const phi = Math.acos(2 * Math.random() - 1);
+                            return [r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi)];
+                        }
+                    },
+                    buddha: (i) => {
+                        const u = Math.random() * Math.PI * 2; const v = Math.random() * Math.PI * 2;
+                        const r = 8 + Math.cos(3 * v) * 2;
+                        return [r * Math.cos(2 * u), r * Math.sin(2 * u), Math.sin(3 * v) * 5 + (Math.random()-0.5)*2];
+                    },
+                    fireworks: (i) => {
+                        const r = Math.random() * 25; const theta = Math.random() * Math.PI * 2; const phi = Math.acos(2 * Math.random() - 1);
+                        return [r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi)];
+                    }
+                };
+                const shapeKeys = Object.keys(shapes);
+
+                const setTargetShape = (shapeName) => {
+                    setCurrentShape(shapeName.toUpperCase());
+                    const generator = shapes[shapeName];
+                    for (let i = 0; i < particleCount; i++) {
+                        const [x, y, z] = generator(i);
+                        targetPositions[i * 3] = x; targetPositions[i * 3 + 1] = y; targetPositions[i * 3 + 2] = z;
+                    }
+                };
+                setTargetShape('fireworks');
+
+                const changeColors = () => {
+                    const el = document.getElementById('gesture-feedback-box');
+                    if (el) { el.classList.remove('color-changed'); void el.offsetWidth; el.classList.add('color-changed'); }
+                    const hue = Math.random(); const isMulti = Math.random() > 0.8;
+                    const c = new THREE.Color();
+                    const attr = geometry.attributes.color;
+                    for (let i = 0; i < particleCount; i++) {
+                        if (isMulti) c.setHSL(Math.random(), 1.0, 0.6);
+                        else c.setHSL(hue + (Math.random()-0.5)*0.1, 0.9, 0.5 + Math.random()*0.3);
+                        attr.setXYZ(i, c.r, c.g, c.b);
+                    }
+                    attr.needsUpdate = true;
+                };
+
+                // Three.js Animation Loop
+                const clock = new THREE.Clock();
+                const renderParticles = () => {
+                    particleAnimId = requestAnimationFrame(renderParticles);
+                    const time = clock.getElapsedTime();
+                    const positions = geometry.attributes.position.array;
+                    for (let i = 0; i < particleCount; i++) {
+                        const idx = i * 3;
+                        positions[idx] += (targetPositions[idx] - positions[idx]) * 0.08;
+                        positions[idx+1] += (targetPositions[idx+1] - positions[idx+1]) * 0.08;
+                        positions[idx+2] += (targetPositions[idx+2] - positions[idx+2]) * 0.08;
+                        positions[idx+1] += Math.sin(time * 2 + positions[idx]) * 0.01;
+                    }
+                    geometry.attributes.position.needsUpdate = true;
+                    particles.rotation.y = time * 0.15;
+                    particles.scale.setScalar(handScale);
+                    renderer.render(scene, camera);
+                };
+                renderParticles();
+
+                // --- 3. MediaPipe Hands ---
+                let gestureDebounce = 0;
+                let lastGesture = 'none';
+                let cameraUtils = null;
+
+                const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+                hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+
+                hands.onResults((results) => {
+                    setStatus("偵測中...");
+                    const miniCanvas = miniHandCanvasRef.current;
+                    const miniCtx = miniCanvas.getContext('2d');
+                    
+                    // Clear mini canvas
+                    miniCtx.clearRect(0, 0, miniCanvas.width, miniCanvas.height);
+
+                    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                        setIsActive(true); // Hand detected -> Switch to Particles
+                        
+                        // Draw Skeleton on Mini Canvas
+                        const landmarks = results.multiHandLandmarks[0];
+                        miniCtx.save();
+                        // Draw connectors
+                        drawConnectors(miniCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff88', lineWidth: 2});
+                        // Draw landmarks
+                        drawLandmarks(miniCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 2});
+                        miniCtx.restore();
+
+                        // Gesture Logic
+                        const lm = landmarks;
+                        const palmSize = Math.sqrt(Math.pow(lm[0].x - lm[9].x, 2) + Math.pow(lm[0].y - lm[9].y, 2));
+                        const targetScale = 0.5 + (palmSize * 6);
+                        handScale += (targetScale - handScale) * 0.1;
+
+                        const tips = [8, 12, 16, 20]; const mcp = [5, 9, 13, 17];
+                        let openScore = 0;
+                        for(let i=0; i<4; i++) {
+                            const tipToWrist = Math.sqrt(Math.pow(lm[tips[i]].x - lm[0].x, 2) + Math.pow(lm[tips[i]].y - lm[0].y, 2));
+                            const mcpToWrist = Math.sqrt(Math.pow(lm[mcp[i]].x - lm[0].x, 2) + Math.pow(lm[mcp[i]].y - lm[0].y, 2));
+                            if (tipToWrist > mcpToWrist * 1.3) openScore++;
+                        }
+
+                        let currentGesture = 'neutral';
+                        if (openScore >= 3) currentGesture = 'open';
+                        else {
+                             let avgTipDist = 0;
+                             tips.forEach(i => { avgTipDist += Math.sqrt(Math.pow(lm[i].x - lm[0].x, 2) + Math.pow(lm[i].y - lm[0].y, 2)); });
+                             if ((avgTipDist / 4) / palmSize < 1.0) currentGesture = 'closed';
+                        }
+
+                        if(currentGesture === 'open') setGesture("張開 (Open)");
+                        else if(currentGesture === 'closed') setGesture("握拳 (Closed)");
+                        else setGesture("一般 (Neutral)");
+
+                        const now = Date.now();
+                        if (now - gestureDebounce > 500) {
+                            if (currentGesture === 'open' && lastGesture !== 'open') {
+                                setTargetShape(shapeKeys[Math.floor(Math.random() * shapeKeys.length)]);
+                                gestureDebounce = now;
+                            } else if (currentGesture === 'closed' && lastGesture !== 'closed') {
+                                changeColors();
+                                gestureDebounce = now;
+                            }
+                        }
+                        lastGesture = currentGesture;
+
+                    } else {
+                        setIsActive(false); // No Hand -> Switch to Bubbles
+                        setGesture("未偵測到手部");
+                        handScale += (1.0 - handScale) * 0.05;
+                    }
+                });
+
+                cameraUtils = new Camera(videoRef.current, {
+                    onFrame: async () => { await hands.send({image: videoRef.current}); },
+                    width: 640, height: 480, facingMode: 'user'
+                });
+                cameraUtils.start().catch(e => setStatus("無攝影機權限"));
+
+                return () => {
+                    cancelAnimationFrame(bubbleAnimId);
+                    cancelAnimationFrame(particleAnimId);
+                    if(renderer) renderer.dispose();
+                    window.removeEventListener('resize', handleResize);
+                };
+            }, []);
+
+            return (
+                <>
+                    {/* Layer 1: Bubble Background (Show when !isActive) */}
+                    <canvas 
+                        ref={bubbleCanvasRef} 
+                        className="bg-layer z-0" 
+                        style={{ opacity: isActive ? 0 : 1 }}
+                    />
+
+                    {/* Layer 2: Three.js Particles (Show when isActive) */}
+                    <div 
+                        ref={threeContainerRef} 
+                        className="bg-layer z-[1]" 
+                        style={{ 
+                            opacity: isActive ? 1 : 0, 
+                            background: 'radial-gradient(circle at center, #1a1a2e 0%, #000000 100%)',
+                            pointerEvents: 'none'
+                        }} 
+                    />
+
+                    <video ref={videoRef} id="video-input" playsInline></video>
+                    
+                    {/* UI Overlay: Mini Map & Status */}
+                    <div className="fixed top-4 right-4 z-[50] flex flex-col items-end gap-2 pointer-events-none">
+                        <div id="gesture-feedback-box" className="bg-black/40 backdrop-blur-md border border-white/10 rounded-xl p-3 shadow-lg transition-colors duration-300 w-44 pointer-events-auto">
+                            <div className="flex items-center justify-between mb-2 pb-2 border-b border-white/10">
+                                <span className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">
+                                    {isActive ? "HAND DETECTED" : "IDLE MODE"}
+                                </span>
+                                <div className={`w-2 h-2 rounded-full transition-colors duration-500 ${isActive ? 'bg-green-400 shadow-[0_0_8px_#4ade80]' : 'bg-slate-600'}`}></div>
+                            </div>
+                            
+                            {/* Mini Skeleton Canvas */}
+                            <div className="flex justify-center bg-black/20 rounded-lg mb-2 overflow-hidden h-24 relative border border-white/5">
+                                <canvas 
+                                    ref={miniHandCanvasRef} 
+                                    width="160" height="120" 
+                                    className="w-full h-full object-contain"
+                                />
+                                {!isActive && (
+                                    <div className="absolute inset-0 flex items-center justify-center text-[10px] text-slate-600">
+                                        等待手勢...
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                    <div className="text-slate-500 scale-75 origin-top-left">GESTURE</div>
+                                    <div className="font-mono font-bold text-cyan-400 truncate">{gesture}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-500 scale-75 origin-top-left">SHAPE</div>
+                                    <div className="font-mono font-bold text-pink-400 truncate">{currentShape}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </>
+            );
+        }
+
+        // TodaySchedule Component
+        function TodaySchedule({ slots, timetable, now }) {
+          const today = now.getDay();
+          const todayName = DAYS_ZH[today];
+          const currentHour = now.getHours().toString().padStart(2, '0');
+          const currentMinute = now.getMinutes().toString().padStart(2, '0');
+          const currentTime = `${currentHour}:${currentMinute}`;
+
+          return (
+            <div className="hidden lg:block fixed left-4 top-1/2 -translate-y-1/2 z-30 w-56">
+              <div className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-3 shadow-2xl max-h-[85vh] overflow-y-auto">
+                <div className="text-center mb-3 sticky top-0 bg-black/60 backdrop-blur-md py-1.5 rounded-lg -mx-3 px-3">
+                  <h3 style={{animation: 'pastel-shift 12s ease-in-out infinite', color: '#ffffff'}} className="text-base font-black mb-0.5">
+                    今日課表
+                  </h3>
+                  <p className="text-[10px] text-slate-400">{todayName}</p>
+                </div>
+                
+                <div className="space-y-1.5">
+                  {slots.map(slot => {
+                    const subject = timetable[today]?.[slot.id] || '（空堂）';
+                    const isNow = currentTime >= slot.start && currentTime < slot.end;
+                    const isPast = currentTime >= slot.end;
+                    
+                    return (
+                      <div 
+                        key={slot.id}
+                        className={`p-2 rounded-lg border transition-all duration-300 ${
+                          isNow 
+                            ? 'bg-gradient-to-r from-pink-500/30 to-purple-500/30 border-pink-400 scale-105 shadow-lg shadow-pink-500/30' 
+                            : isPast
+                            ? 'bg-white/5 border-white/10 opacity-40'
+                            : 'bg-white/10 border-white/20'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className={`font-bold text-[10px] ${isNow ? 'text-pink-300' : 'text-slate-400'}`}>
+                            {slot.name}
+                          </span>
+                          {isNow && (
+                            <span className="px-1.5 py-0.5 bg-pink-500 text-white text-[8px] font-black rounded-full animate-pulse">
+                              進行中
+                            </span>
+                          )}
+                        </div>
+                        
+                        <div style={{animation: isNow ? 'pastel-shift 12s ease-in-out infinite' : 'none', color: '#ffffff'}} className={`text-sm font-black mb-0.5`}>
+                          {subject}
+                        </div>
+                        
+                        <div className={`text-[9px] ${isNow ? 'text-pink-200' : 'text-slate-500'}`}>
+                          {slot.start} - {slot.end}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // RightSchedule Component
+        function RightSchedule({ events, onRefresh, isRefreshing }) {
+          const eventLines = events ? events.split('\n').filter(line => line.trim() !== '') : [];
+
+          return (
+            <div className="hidden lg:block fixed right-4 top-1/2 -translate-y-1/2 z-30 w-64">
+              <div className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-3 shadow-2xl max-h-[85vh] overflow-y-auto flex flex-col h-full">
+                <div className="text-center mb-3 sticky top-0 bg-black/60 backdrop-blur-md py-1.5 rounded-lg -mx-3 px-3 flex items-center justify-between">
+                   <div className="flex-1"></div>
+                   <div className="text-center flex-1">
+                      <h3 style={{animation: 'pastel-shift 12s ease-in-out infinite', color: '#ffffff'}} className="text-base font-black mb-0.5 whitespace-nowrap">
+                        行事曆
+                      </h3>
+                      <p className="text-[10px] text-slate-400">校務行程</p>
+                   </div>
+                   <div className="flex-1 flex justify-end">
+                      <button 
+                        onClick={onRefresh} 
+                        disabled={isRefreshing}
+                        className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-slate-400 transition-colors"
+                        title="重新整理行事曆"
+                      >
+                         <i className={`fas fa-sync-alt text-[10px] ${isRefreshing ? 'fa-spin text-amber-400' : ''}`}></i>
+                      </button>
+                   </div>
+                </div>
+                
+                <div className="space-y-2">
+                  {isRefreshing ? (
+                    <div className="p-4 text-center text-slate-400 text-xs animate-pulse">
+                       正在同步最新資料...
+                    </div>
+                  ) : eventLines.length === 0 ? (
+                    <div className="p-4 text-center bg-white/5 rounded-lg border border-white/10">
+                       <span className="text-slate-400 text-sm font-bold">無</span>
+                       <p className="text-[10px] text-slate-500 mt-1">目前沒有排定行程</p>
+                    </div>
+                  ) : (
+                    eventLines.map((line, index) => (
+                      <div 
+                        key={index}
+                        className="p-3 rounded-lg border bg-white/10 border-white/20 hover:bg-white/15 transition-all"
+                      >
+                        <div style={{animation: 'pastel-shift 12s ease-in-out infinite', color: '#ffffff'}} className="text-sm font-bold leading-relaxed whitespace-pre-wrap">
+                          {line}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // MainDisplay Component
+        function MainDisplay({ now, status, broadcast, onCloseBroadcast }) {
+          const minguoYear = now.getFullYear() - 1911;
+          const dateStr = `民國${minguoYear}年${(now.getMonth() + 1).toString().padStart(2, '0')}月${now.getDate().toString().padStart(2, '0')}日 ${DAYS_ZH[now.getDay()]}`;
+          const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false });
+
+          if (broadcast) {
+            return (
+              <div className="flex flex-col items-center animate-in zoom-in duration-500 mt-52 px-4 relative z-10">
+                <h2 className="text-pink-400 text-3xl font-black uppercase tracking-[0.3em] mb-12 drop-shadow-lg">
+                  <i className="fas fa-bullhorn mr-4"></i>
+                  系統廣播中
+                </h2>
+                <div style={{animation: 'pastel-shift 12s ease-in-out infinite', color: '#ffffff'}} className="text-[14rem] font-black leading-none text-center drop-shadow-[0_20px_40px_rgba(0,0,0,0.8)]">
+                  {broadcast.title}
+                </div>
+                <div className="text-6xl text-slate-400 font-medium mt-8 tracking-widest text-center">
+                  {broadcast.subtitle}
+                </div>
+                <button 
+                  onClick={onCloseBroadcast}
+                  className="mt-24 px-16 py-6 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-2xl font-bold transition-all btn-3d"
+                >
+                  關閉廣播返回
+                </button>
+              </div>
+            );
+          }
+
+          return (
+            <div className="flex flex-col items-center text-center animate-in fade-in duration-1000 px-4 h-full justify-center pb-20 relative z-10">
+              <div className="mb-6">
+                <div style={{animation: 'pastel-shift 12s ease-in-out infinite', color: '#ffffff'}} className="text-[10rem] font-black leading-tight drop-shadow-[0_15px_30px_rgba(0,0,0,0.5)]">
+                  {status.label}
+                </div>
+              </div>
+
+              <div style={{animation: 'pastel-shift 12s ease-in-out infinite', color: '#ffffff'}} className="text-[18rem] font-mono font-bold tracking-tighter leading-none mb-12 drop-shadow-[0_30px_60px_rgba(0,0,0,0.7)]">
+                {timeStr}
+              </div>
+
+              <div className="text-5xl text-slate-500 font-light tracking-widest px-12 py-4 bg-white/2 rounded-full border border-white/5">
+                {dateStr}
+              </div>
+            </div>
+          );
+        }
+
+        // Toolbar Component
+        function Toolbar({ onOpenBroadcast, onOpenSettings, onOpenTravel, onQuickAction }) {
+          const [isFullScreen, setIsFullScreen] = useState(false);
+
+          useEffect(() => {
+            const handleFullScreenChange = () => setIsFullScreen(!!document.fullscreenElement);
+            ['fullscreenchange','webkitfullscreenchange','mozfullscreenchange','MSFullscreenChange'].forEach(
+                e => document.addEventListener(e, handleFullScreenChange)
+            );
+            return () => ['fullscreenchange','webkitfullscreenchange','mozfullscreenchange','MSFullscreenChange'].forEach(
+                e => document.removeEventListener(e, handleFullScreenChange)
+            );
+          }, []);
+
+          const toggleFullScreen = () => {
+            if (!document.fullscreenElement) {
+              document.documentElement.requestFullscreen().catch((err) => {
+                console.error(`Error attempting to enable full-screen mode: ${err.message}`);
+              });
+            } else {
+              if (document.exitFullscreen) document.exitFullscreen();
+            }
+          };
+
+          return (
+            <div className="p-4 md:p-8 glass-texture border-t border-white/10 relative z-20">
+              <div className="flex flex-col md:flex-row items-center justify-center gap-3 md:gap-4 mb-3 md:mb-0">
+                <button 
+                    onClick={onOpenBroadcast}
+                    className="w-full md:w-auto px-6 md:px-8 h-14 md:h-16 bg-gradient-to-b from-pink-400 to-pink-600 rounded-2xl flex items-center justify-center gap-2 md:gap-3 transition-all btn-3d font-black shadow-pink-900/40"
+                >
+                  <i className="fas fa-bullhorn text-lg md:text-xl"></i>
+                  <span className="text-base md:text-lg">自訂廣播</span>
+                </button>
+
+                <div className="w-full md:w-auto grid grid-cols-2 md:flex gap-2 md:gap-4">
+                  <button 
+                      onClick={() => onQuickAction("去上課了", "下課才回來")}
+                      className="px-4 md:px-6 h-14 md:h-16 bg-gradient-to-b from-blue-500 to-blue-700 rounded-2xl flex flex-col items-center justify-center transition-all btn-3d font-black shadow-blue-900/40"
+                  >
+                    <div className="flex items-center gap-2">
+                      <i className="fas fa-person-walking-arrow-right text-sm md:text-lg"></i>
+                      <span className="text-sm md:text-base">去上課了</span>
+                    </div>
+                    <span className="text-[9px] md:text-[10px] opacity-70 font-normal">下課才回來</span>
+                  </button>
+
+                  <button 
+                      onClick={() => onQuickAction("回家了", "明天才回來")}
+                      className="px-4 md:px-6 h-14 md:h-16 bg-gradient-to-b from-orange-500 to-orange-700 rounded-2xl flex flex-col items-center justify-center transition-all btn-3d font-black shadow-orange-900/40"
+                  >
+                    <div className="flex items-center gap-2">
+                      <i className="fas fa-house-chimney text-sm md:text-lg"></i>
+                      <span className="text-sm md:text-base">回家了</span>
+                    </div>
+                    <span className="text-[9px] md:text-[10px] opacity-70 font-normal">明天才回來</span>
+                  </button>
+
+                  <button 
+                      onClick={() => onQuickAction("打球去了", "下午才回來")}
+                      className="px-4 md:px-6 h-14 md:h-16 bg-gradient-to-b from-emerald-500 to-emerald-700 rounded-2xl flex flex-col items-center justify-center transition-all btn-3d font-black shadow-emerald-900/40"
+                  >
+                    <div className="flex items-center gap-2">
+                      <i className="fas fa-basketball text-sm md:text-lg"></i>
+                      <span className="text-sm md:text-base">打球去了</span>
+                    </div>
+                    <span className="text-[9px] md:text-[10px] opacity-70 font-normal">下午才回來</span>
+                  </button>
+
+                  <button 
+                      onClick={() => onQuickAction("開會去了", "請稍後再來訪")}
+                      className="px-4 md:px-6 h-14 md:h-16 bg-gradient-to-b from-violet-500 to-violet-700 rounded-2xl flex flex-col items-center justify-center transition-all btn-3d font-black shadow-violet-900/40"
+                  >
+                    <div className="flex items-center gap-2">
+                      <i className="fas fa-users-rectangle text-sm md:text-lg"></i>
+                      <span className="text-sm md:text-base">開會去了</span>
+                    </div>
+                    <span className="text-[9px] md:text-[10px] opacity-70 font-normal">請稍後再來訪</span>
+                  </button>
+                </div>
+
+                <button 
+                    onClick={onOpenTravel}
+                    className="w-full md:w-auto px-6 md:px-8 h-14 md:h-16 bg-gradient-to-b from-indigo-500 to-indigo-700 rounded-2xl flex items-center justify-center gap-2 md:gap-3 transition-all btn-3d font-black shadow-indigo-900/40 border border-indigo-400/20"
+                >
+                  <i className="fas fa-plane-departure text-lg md:text-xl"></i>
+                  <span className="text-base md:text-lg">出國了</span>
+                </button>
+              </div>
+
+              <div className="flex items-center justify-center md:justify-end gap-3 md:gap-4 mt-3 md:mt-0 md:absolute md:right-8 md:top-1/2 md:-translate-y-1/2">
+                <button 
+                    onClick={toggleFullScreen}
+                    title={isFullScreen ? "退出全螢幕" : "進入全螢幕"}
+                    className="w-12 h-12 md:w-14 md:h-14 flex items-center justify-center hover:bg-white/10 rounded-full transition-all border border-white/5 bg-white/2"
+                >
+                    <i className={`fas ${isFullScreen ? 'fa-compress' : 'fa-expand'} text-xl md:text-2xl text-slate-400`}></i>
+                </button>
+                <button 
+                    onClick={onOpenSettings}
+                    title="系統設定"
+                    className="w-12 h-12 md:w-14 md:h-14 flex items-center justify-center hover:bg-white/10 rounded-full transition-all border border-white/5 bg-white/2"
+                >
+                    <i className="fas fa-gear text-xl md:text-2xl text-slate-400"></i>
+                </button>
+              </div>
+            </div>
+          );
+        }
+
+        // BroadcastModal Component
+        function BroadcastModal({ templates, onUpdateTemplates, onPublish, onClose }) {
+          const [activeTab, setActiveTab] = useState(templates[0].id);
+          const current = templates.find(t => t.id === activeTab);
+
+          const handleChange = (field, val) => {
+            onUpdateTemplates(templates.map(t => t.id === activeTab ? { ...t, [field]: val } : t));
+          };
+
+          return (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-2 md:p-4 animate-in fade-in duration-200">
+              <div className="bg-white rounded-2xl md:rounded-[2rem] w-full max-w-xl max-h-[90vh] overflow-y-auto text-slate-800 shadow-2xl flex flex-col animate-in slide-in-from-bottom-8 duration-300">
+                <div className="p-4 md:p-6 border-b flex items-center justify-between sticky top-0 bg-white z-10">
+                  <h2 className="text-lg md:text-2xl font-bold flex items-center gap-2 md:gap-3">
+                    <i className="fas fa-bullhorn text-pink-500"></i>
+                    發布自訂廣播
+                  </h2>
+                  <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl md:text-2xl">
+                    <i className="fas fa-times"></i>
+                  </button>
+                </div>
+
+                <div className="p-4 md:p-8 space-y-4 md:space-y-6">
+                  <div className="flex bg-slate-100 p-1 rounded-xl md:rounded-2xl">
+                    {templates.map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => setActiveTab(t.id)}
+                        className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg md:rounded-xl transition-all ${
+                          activeTab === t.id ? 'bg-white text-pink-500 shadow-sm' : 'text-slate-400'
+                        }`}
+                      >
+                        {t.btnName}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3 md:space-y-4">
+                    <div>
+                      <label className="block text-xs md:text-sm font-bold text-slate-400 mb-2">按鈕名稱 <i className="fas fa-pen text-[10px] ml-1"></i></label>
+                      <input 
+                        value={current.btnName} 
+                        onChange={e => handleChange('btnName', e.target.value)}
+                        className="w-full px-4 md:px-5 py-2 md:py-3 text-sm md:text-base bg-slate-50 border rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-pink-400 transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs md:text-sm font-bold text-slate-400 mb-2">主標題</label>
+                      <input 
+                        value={current.title} 
+                        onChange={e => handleChange('title', e.target.value)}
+                        placeholder="例如：全班集合"
+                        className="w-full px-4 md:px-5 py-3 md:py-4 bg-slate-50 border rounded-xl md:rounded-2xl text-lg md:text-2xl font-bold outline-none focus:ring-2 focus:ring-pink-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs md:text-sm font-bold text-slate-400 mb-2">副標題</label>
+                      <input 
+                        value={current.subtitle} 
+                        onChange={e => handleChange('subtitle', e.target.value)}
+                        placeholder="例如：請到走廊排隊"
+                        className="w-full px-4 md:px-5 py-2 md:py-3 text-sm md:text-base bg-slate-50 border rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-pink-400"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 rounded-xl md:rounded-2xl p-4 md:p-6 text-center border border-slate-100">
+                    <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest mb-2">畫面預覽</p>
+                    <div className="text-2xl md:text-3xl font-bold text-slate-800 mb-1">{current.title || '（未輸入）'}</div>
+                    <div className="text-xs md:text-sm text-slate-400">{current.subtitle || '（未輸入）'}</div>
+                  </div>
+                </div>
+
+                <div className="p-4 md:p-6 bg-slate-50 border-t flex items-center justify-end gap-3 md:gap-4 sticky bottom-0">
+                  <button onClick={onClose} className="px-6 md:px-8 py-2 md:py-3 text-sm md:text-base font-bold text-slate-500 hover:text-slate-700">取消</button>
+                  <button 
+                    onClick={() => onPublish(current)}
+                    className="px-8 md:px-10 py-2 md:py-3 text-sm md:text-base bg-pink-500 hover:bg-pink-600 text-white font-bold rounded-xl md:rounded-2xl shadow-lg shadow-pink-200 transition-all active:scale-95"
+                  >
+                    發布廣播
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // TravelModal Component
+        function TravelModal({ onPublish, onClose }) {
+          const travelOptions = [
+            { name: "德國", icon: "fa-castle" },
+            { name: "日本", icon: "fa-torii-gate" },
+            { name: "澳洲", icon: "fa-kangaroo" },
+            { name: "美國", icon: "fa-flag-usa" }
+          ];
+          const [custom, setCustom] = useState("");
+
+          return (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl p-2 md:p-4 animate-in fade-in duration-300">
+              <div className="bg-slate-900/95 border border-white/10 rounded-2xl md:rounded-[3rem] w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 md:p-10 shadow-2xl animate-in zoom-in-95">
+                <div className="flex justify-between items-center mb-6 md:mb-10">
+                    <h2 className="text-2xl md:text-3xl font-black flex items-center gap-3 md:gap-4 text-indigo-400">
+                        <i className="fas fa-globe-americas"></i>
+                        選擇目的地
+                    </h2>
+                    <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors text-2xl md:text-3xl">
+                        <i className="fas fa-times"></i>
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 md:gap-5 mb-6 md:mb-10">
+                    {travelOptions.map(opt => (
+                        <button
+                            key={opt.name}
+                            onClick={() => onPublish(opt.name)}
+                            className="p-6 md:p-8 rounded-2xl md:rounded-3xl bg-white/5 border border-white/10 hover:bg-indigo-600/40 hover:border-indigo-400 transition-all font-bold text-xl md:text-2xl btn-3d flex flex-col items-center gap-2 md:gap-3"
+                        >
+                            <i className={`fas ${opt.icon} text-2xl md:text-3xl text-indigo-300`}></i>
+                            {opt.name}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="space-y-3 md:space-y-4">
+                    <label className="text-[10px] md:text-xs font-bold text-slate-500 uppercase tracking-widest px-2 block">或自行輸入目的地</label>
+                    <div className="relative flex items-center">
+                        <input 
+                            value={custom}
+                            onChange={e => setCustom(e.target.value)}
+                            placeholder="輸入國家或城市..."
+                            className="w-full px-6 md:px-8 py-4 md:py-5 text-base md:text-xl bg-white/5 border border-white/10 rounded-2xl md:rounded-3xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all pr-24 md:pr-32"
+                        />
+                        <button 
+                            disabled={!custom.trim()}
+                            onClick={() => onPublish(custom)}
+                            className="absolute right-2 top-2 bottom-2 px-6 md:px-8 text-sm md:text-base bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl md:rounded-2xl font-bold disabled:opacity-30 transition-all active:scale-95"
+                        >
+                            確定
+                        </button>
+                    </div>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // SettingsModal Component
+        function SettingsModal({ slots, setSlots, timetable, setTimetable, lastSyncTime, onSync, onClose }) {
+          const [activeSection, setActiveSection] = useState('timetable');
+          const [isSyncingLocal, setIsSyncingLocal] = useState(false);
+          const [isImporting, setIsImporting] = useState(false);
+          const fileInputRef = useRef(null);
+
+          const handleTimetableChange = (day, slotId, value) => {
+            setTimetable({
+              ...timetable,
+              [day]: { ...(timetable[day] || {}), [slotId]: value }
+            });
+          };
+
+          const handleGoogleSync = async () => {
+            setIsSyncingLocal(true);
+            await onSync();
+            setIsSyncingLocal(false);
+            setActiveSection('timetable');
+          };
+
+          const handleFileChange = async (event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+
+            setIsImporting(true);
+            try {
+              const arrayBuffer = await file.arrayBuffer();
+              const data = new Uint8Array(arrayBuffer);
+              const workbook = XLSX.read(data, { type: 'array' });
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+              const newSlots = [];
+              const newTimetable = {};
+              const dataRows = json.slice(1);
+              
+              dataRows.forEach((row, rowIndex) => {
+                if (!row || row.length === 0) return;
+                
+                const slotRaw = String(row[0] || '').replace(/\s/g, '');
+                if (!slotRaw) return;
+
+                const timeMatch = slotRaw.match(/(\d{1,2}[:：]\d{2})\s*[~～-]\s*(\d{1,2}[:：]\d{2})/);
+                const nameMatch = slotRaw.match(/^[^\d]+/);
+                const slotName = nameMatch ? nameMatch[0] : `第${rowIndex + 1}節`;
+                const startTime = timeMatch ? timeMatch[1].replace('：', ':').padStart(5, '0') : '00:00';
+                const endTime = timeMatch ? timeMatch[2].replace('：', ':').padStart(5, '0') : '00:00';
+                
+                const slotId = (rowIndex + 1).toString();
+                newSlots.push({ id: slotId, name: slotName, start: startTime, end: endTime });
+
+                for (let day = 0; day < 7; day++) {
+                  const subject = row[day + 1];
+                  if (subject) {
+                    if (!newTimetable[day]) newTimetable[day] = {};
+                    newTimetable[day][slotId] = String(subject).trim();
+                  }
+                }
+              });
+
+              if (newSlots.length > 0) {
+                setSlots(newSlots);
+                setTimetable(newTimetable);
+                setActiveSection('timetable');
+                alert(`匯入成功！已讀取 ${newSlots.length} 節課表內容。`);
+              }
+            } catch (error) {
+              alert('檔案讀取失敗：' + error.message);
+            } finally {
+              setIsImporting(false);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+            }
+          };
+
+          const triggerFileInput = () => fileInputRef.current?.click();
+
+          const sections = [
+            { id: 'schedule', title: '作息時間表設定', icon: 'fa-clock' },
+            { id: 'timetable', title: '課表設定', icon: 'fa-book' },
+            { id: 'system', title: '雲端同步與匯入', icon: 'fa-cloud-arrow-down' },
+          ];
+
+          return (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-2 md:p-4 animate-in fade-in duration-200">
+              <div className="bg-[#f8fafc] rounded-xl md:rounded-[2rem] w-full max-w-[98vw] lg:max-w-6xl max-h-[95vh] md:max-h-[92vh] text-slate-800 overflow-hidden shadow-2xl flex flex-col animate-in zoom-in-95 duration-300">
+                <div className="p-4 md:p-6 bg-white border-b flex items-center justify-between sticky top-0 z-10">
+                  <h2 className="text-lg md:text-2xl font-bold flex items-center gap-2 md:gap-3">
+                    <i className="fas fa-gear text-slate-700"></i>
+                    設定控制台
+                  </h2>
+                  <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl md:text-2xl">
+                    <i className="fas fa-times"></i>
+                  </button>
+                </div>
+
+                <div className="flex-grow overflow-y-auto p-3 md:p-6 space-y-3 md:space-y-4">
+                  {sections.map(sec => (
+                    <div key={sec.id} className="bg-white border border-slate-200 rounded-xl md:rounded-2xl overflow-hidden shadow-sm">
+                      <button 
+                        onClick={() => setActiveSection(activeSection === sec.id ? null : sec.id)}
+                        className="w-full px-4 md:px-8 py-4 md:py-5 flex items-center justify-between hover:bg-slate-50 transition-all"
+                      >
+                        <div className="flex items-center gap-3 md:gap-4">
+                            <i className={`fas ${sec.icon} ${activeSection === sec.id ? 'text-blue-500' : 'text-slate-400'} text-lg md:text-xl`}></i>
+                            <span className="font-bold text-base md:text-lg">{sec.title}</span>
+                        </div>
+                        <i className={`fas fa-chevron-${activeSection === sec.id ? 'up' : 'down'} text-slate-300`}></i>
+                      </button>
+
+                      {activeSection === sec.id && (
+                        <div className="p-3 md:p-8 border-t bg-slate-50/50 animate-in slide-in-from-top-2">
+                          {sec.id === 'timetable' && (
+                            <div>
+                              {lastSyncTime && (
+                                <div className="mb-3 md:mb-4 p-3 md:p-4 bg-green-50 border border-green-200 rounded-lg md:rounded-xl flex items-center gap-2 md:gap-3">
+                                  <i className="fas fa-check-circle text-green-600 text-lg md:text-xl"></i>
+                                  <div className="text-xs md:text-sm text-green-800">
+                                    <span className="font-bold">已同步 Google 試算表</span>
+                                    <span className="text-green-600 ml-2 hidden md:inline">({lastSyncTime})</span>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="overflow-x-auto pb-4 -mx-3 md:mx-0">
+                              <div className="min-w-[800px] px-3 md:px-0">
+                              <table className="w-full border-separate border-spacing-x-2 md:border-spacing-x-3 border-spacing-y-2">
+                                <thead>
+                                  <tr className="text-slate-400 text-xs md:text-sm font-bold">
+                                    <th className="w-16 md:w-20 py-2">節次</th>
+                                    {DAYS_ZH.map(d => <th key={d} className="min-w-[100px] md:min-w-[120px] py-2">{d}</th>)}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {slots.map(slot => (
+                                    <tr key={slot.id}>
+                                      <td className="text-center">
+                                        <div className="px-2 md:px-3 py-2 bg-white border border-slate-200 rounded-lg md:rounded-xl text-slate-500 font-bold text-xs md:text-sm shadow-sm">
+                                            {slot.name}
+                                        </div>
+                                      </td>
+                                      {[0, 1, 2, 3, 4, 5, 6].map(day => (
+                                        <td key={day}>
+                                          <input 
+                                            className="w-full px-2 md:px-4 py-2 md:py-3 bg-white border border-slate-200 rounded-lg md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-400 text-sm md:text-base font-medium transition-all text-center shadow-sm placeholder:text-slate-200"
+                                            value={timetable[day]?.[slot.id] || ''}
+                                            onChange={e => handleTimetableChange(day, slot.id, e.target.value)}
+                                          />
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            </div>
+                            </div>
+                          )}
+                          {sec.id === 'schedule' && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                                {slots.map(slot => (
+                                    <div key={slot.id} className="bg-white p-4 md:p-5 border border-slate-200 rounded-2xl md:rounded-3xl flex flex-col gap-2 md:gap-3 shadow-sm">
+                                        <span className="font-black text-slate-400 text-[10px] md:text-xs uppercase tracking-widest">{slot.name}</span>
+                                        <div className="flex items-center gap-2">
+                                            <input type="time" className="flex-1 p-2 text-sm md:text-base bg-slate-50 border border-slate-100 rounded-lg md:rounded-xl text-center font-bold" value={slot.start} onChange={e => setSlots(slots.map(s => s.id === slot.id ? {...s, start: e.target.value} : s))} />
+                                            <span className="text-slate-300">~</span>
+                                            <input type="time" className="flex-1 p-2 text-sm md:text-base bg-slate-50 border border-slate-100 rounded-lg md:rounded-xl text-center font-bold" value={slot.end} onChange={e => setSlots(slots.map(s => s.id === slot.id ? {...s, end: e.target.value} : s))} />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                          )}
+                          {sec.id === 'system' && (
+                            <div className="space-y-4 md:space-y-6">
+                                <div className="bg-gradient-to-br from-blue-500 to-indigo-600 p-6 md:p-8 rounded-xl md:rounded-[2rem] text-white flex flex-col gap-4 md:gap-6 shadow-xl shadow-blue-200">
+                                    <div className="flex items-center gap-4 md:gap-6 flex-1">
+                                        <div className="w-12 h-12 md:w-16 md:h-16 bg-white/20 rounded-2xl md:rounded-3xl flex items-center justify-center text-white flex-shrink-0">
+                                            <i className="fas fa-sync-alt text-xl md:text-2xl"></i>
+                                        </div>
+                                        <div className="flex-1">
+                                            <h4 className="font-black text-lg md:text-xl">同步 Google 試算表</h4>
+                                            <p className="text-blue-100 text-sm md:text-base mt-1">直接從您的線上 Google 試算表讀取最新課表。</p>
+                                            {lastSyncTime && (
+                                              <p className="text-blue-200 text-xs md:text-sm mt-2">
+                                                <i className="fas fa-clock mr-2"></i>
+                                                上次同步: {lastSyncTime}
+                                              </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={handleGoogleSync}
+                                        disabled={isSyncingLocal}
+                                        className={`w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-white text-blue-600 font-black rounded-xl md:rounded-2xl transition-all shadow-lg hover:scale-105 active:scale-95 ${isSyncingLocal ? 'opacity-50' : ''}`}
+                                    >
+                                        {isSyncingLocal ? '同步中...' : '立即同步'}
+                                    </button>
+                                </div>
+
+                                <div className="bg-white p-6 md:p-8 rounded-xl md:rounded-[2rem] border border-slate-200 flex flex-col gap-4 md:gap-6 shadow-sm">
+                                    <div className="flex items-center gap-4 md:gap-6 flex-1">
+                                        <div className="w-12 h-12 md:w-16 md:h-16 bg-slate-100 rounded-2xl md:rounded-3xl flex items-center justify-center text-slate-600 shadow-inner flex-shrink-0">
+                                            <i className="fas fa-file-excel text-xl md:text-2xl"></i>
+                                        </div>
+                                        <div className="flex-1">
+                                            <h4 className="font-black text-lg md:text-xl text-slate-700">離線匯入 Excel</h4>
+                                            <p className="text-slate-400 text-sm md:text-base mt-1">手動上傳 .xlsx 檔案來更新課表。</p>
+                                        </div>
+                                    </div>
+                                    <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".xlsx" className="hidden" />
+                                    <button onClick={triggerFileInput} disabled={isImporting} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black rounded-xl md:rounded-2xl transition-all flex items-center justify-center gap-3 active:scale-95">
+                                        <i className={`fas ${isImporting ? 'fa-spinner fa-spin' : 'fa-folder-open'} text-lg md:text-xl`}></i>
+                                        {isImporting ? '處理中...' : '選取檔案'}
+                                    </button>
+                                </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="p-4 md:p-6 bg-white border-t flex items-center justify-end sticky bottom-0">
+                  <button onClick={onClose} className="w-full md:w-auto px-12 md:px-16 py-3 md:py-4 text-sm md:text-base bg-[#0f172a] hover:bg-slate-800 text-white font-black rounded-xl md:rounded-2xl shadow-xl transition-all active:scale-95">
+                    儲存並關閉
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // Main App Component
+        function App() {
+          const [now, setNow] = useState(new Date());
+          const [isSyncing, setIsSyncing] = useState(false);
+          const [isRefreshingCalendar, setIsRefreshingCalendar] = useState(false);
+          const [calendarEvents, setCalendarEvents] = useState(''); // 初始化為空字串，等待資料
+          
+          const isFetchingRef = useRef(false);
+
+          const [slots, setSlots] = useState(() => {
+            const saved = localStorage.getItem('slots');
+            return saved ? JSON.parse(saved) : DEFAULT_SLOTS;
+          });
+
+          const [timetable, setTimetable] = useState(() => {
+            const saved = localStorage.getItem('timetable');
+            return saved ? JSON.parse(saved) : {};
+          });
+
+          const [lastSyncTime, setLastSyncTime] = useState(() => {
+            return localStorage.getItem('lastSyncTime') || null;
+          });
+
+          const [templates, setTemplates] = useState(() => {
+            const saved = localStorage.getItem('templates');
+            return saved ? JSON.parse(saved) : DEFAULT_TEMPLATES;
+          });
+
+          const [broadcast, setBroadcast] = useState(null);
+          const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
+          const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+          const [isTravelModalOpen, setIsTravelModalOpen] = useState(false);
+          const [showCorsWarning, setShowCorsWarning] = useState(false);
+
+          const fetchCalendarEvents = useCallback(async () => {
+            if (isFetchingRef.current) return;
+            
+            isFetchingRef.current = true;
+            setIsRefreshingCalendar(true);
+
+            try {
+              const response = await fetch(N8N_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                  action: "query_calendar", 
+                  query: "請查詢我的行事曆，給我今天、明天與後天的全部行程。輸出的結果請務必包含今日、明日與後天，並適當換行呈現。",
+                  time: new Date().toISOString() 
+                }),
+                mode: 'cors',
+                cache: 'no-cache'
+              });
+              
+              if (!response.ok) {
+                throw new Error(`伺服器回應錯誤: ${response.status}`);
+              }
+              
+              const data = await response.json();
+              
+              let result = "";
+              if (typeof data === 'string') {
+                result = data;
+              } else if (Array.isArray(data)) {
+                const first = data[0];
+                result = first.output || first.text || first.message || JSON.stringify(first);
+              } else if (data) {
+                result = data.output || data.text || data.message || data.result || JSON.stringify(data);
+              }
+              
+              setCalendarEvents(result);
+            } catch (error) {
+              console.error("行事曆獲取失敗:", error);
+              setCalendarEvents("無法連線至行事曆系統。");
+            } finally {
+              setIsRefreshingCalendar(false);
+              isFetchingRef.current = false;
+            }
+          }, []);
+
+          const syncWithGoogleSheet = useCallback(async (silent = false) => {
+            setIsSyncing(true);
+            try {
+              // 先嘗試直接連接，如果失敗則使用 CORS proxy
+              let response;
+              let csvText;
+              
+              try {
+                response = await fetch(SHEET_URL);
+                if (!response.ok) throw new Error("直接連接失敗");
+                csvText = await response.text();
+              } catch (firstError) {
+                console.log("直接連接失敗，嘗試使用 CORS proxy...");
+                // 使用 CORS proxy 作為備用方案
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(SHEET_URL)}`;
+                response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error("無法抓取試算表內容");
+                csvText = await response.text();
+              }
+              
+              // 檢查是否真的有內容
+              if (!csvText || csvText.trim().length === 0) {
+                throw new Error("試算表內容為空");
+              }
+              
+              const workbook = XLSX.read(csvText, { type: 'string' });
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+              const newSlots = [];
+              const newTimetable = {};
+              const dataRows = json.slice(1);
+              
+              dataRows.forEach((row, rowIndex) => {
+                if (!row || row.length === 0) return;
+                const slotRaw = String(row[0] || '').replace(/\s/g, '');
+                if (!slotRaw) return;
+
+                const timeMatch = slotRaw.match(/(\d{1,2}[:：]\d{2})\s*[~～-]\s*(\d{1,2}[:：]\d{2})/);
+                const nameMatch = slotRaw.match(/^[^\d]+/);
+                const slotName = nameMatch ? nameMatch[0] : `第${rowIndex + 1}節`;
+                const startTime = timeMatch ? timeMatch[1].replace('：', ':').padStart(5, '0') : '00:00';
+                const endTime = timeMatch ? timeMatch[2].replace('：', ':').padStart(5, '0') : '00:00';
+                
+                const slotId = (rowIndex + 1).toString();
+                newSlots.push({ id: slotId, name: slotName, start: startTime, end: endTime });
+
+                for (let day = 0; day < 7; day++) {
+                  const subject = row[day + 1];
+                  if (subject) {
+                    if (!newTimetable[day]) newTimetable[day] = {};
+                    newTimetable[day][slotId] = String(subject).trim();
+                  }
+                }
+              });
+
+              if (newSlots.length > 0) {
+                setSlots(newSlots);
+                setTimetable(newTimetable);
+                const syncTime = new Date().toLocaleString('zh-TW');
+                setLastSyncTime(syncTime);
+                localStorage.setItem('lastSyncTime', syncTime);
+                if (!silent) {
+                  alert(`✅ 同步成功！\n\n已更新 ${newSlots.length} 個時段的課表資料。\n請至「課表設定」查看同步後的內容。`);
+                }
+                console.log(`Google Sheet 同步成功: ${newSlots.length} 個時段已更新`);
+              } else {
+                throw new Error("試算表中沒有找到有效的課表資料");
+              }
+            } catch (error) {
+              console.error("同步失敗:", error);
+              if (!silent) {
+                let errorMessage = `❌ 同步失敗\n\n錯誤訊息: ${error.message}\n\n`;
+                
+                if (error.message.includes("Failed to fetch")) {
+                  errorMessage += `這是 CORS 錯誤，通常發生在直接開啟 HTML 檔案時。\n\n解決方案：\n`;
+                  errorMessage += `1. 使用本機伺服器（推薦）\n`;
+                  errorMessage += `   - Python: python -m http.server 8000\n`;
+                  errorMessage += `   - 然後開啟 http://localhost:8000/classroom-tool.html\n\n`;
+                  errorMessage += `2. 或上傳到網站空間使用\n\n`;
+                  errorMessage += `3. 檢查 Google 試算表權限設定`;
+                } else {
+                  errorMessage += `請確認:\n`;
+                  errorMessage += `1. Google 試算表連結是否正確\n`;
+                  errorMessage += `2. 試算表是否設為「知道連結的使用者可以檢視」\n`;
+                  errorMessage += `3. 試算表格式是否符合要求`;
+                }
+                
+                alert(errorMessage);
+              }
+            } finally {
+              setIsSyncing(false);
+            }
+          }, []);
+
+          useEffect(() => {
+            // 檢查是否使用 file:// 協議開啟
+            if (window.location.protocol === 'file:') {
+              setShowCorsWarning(true);
+              console.warn('⚠️ 檢測到使用 file:// 協議開啟。Google Sheet 同步功能可能無法正常運作。');
+              console.log('建議使用本機伺服器：python -m http.server 8000');
+            }
+            
+            syncWithGoogleSheet(true);
+            fetchCalendarEvents();
+          }, []);
+
+          useEffect(() => {
+            const timer = setInterval(() => {
+              const d = new Date();
+              setNow(d);
+              
+              if (d.getHours() === 3 && d.getMinutes() === 0 && d.getSeconds() === 0) {
+                fetchCalendarEvents();
+              }
+            }, 1000);
+            
+            return () => clearInterval(timer);
+          }, [fetchCalendarEvents]);
+
+          useEffect(() => {
+            localStorage.setItem('slots', JSON.stringify(slots));
+            localStorage.setItem('timetable', JSON.stringify(timetable));
+            localStorage.setItem('templates', JSON.stringify(templates));
+            if (lastSyncTime) {
+              localStorage.setItem('lastSyncTime', lastSyncTime);
+            }
+          }, [slots, timetable, templates, lastSyncTime]);
+
+          const getStatus = () => {
+            const day = now.getDay();
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            const currentTimeStr = `${hours}:${minutes}`;
+            
+            const currentSlot = slots.find(s => currentTimeStr >= s.start && currentTimeStr < s.end);
+            
+            if (currentSlot) {
+              const subject = timetable[day]?.[currentSlot.id];
+              return {
+                name: currentSlot.name,
+                label: subject || '（空堂）',
+                isClass: !!subject
+              };
+            }
+            
+            return {
+              name: '休息',
+              label: '下課時間',
+              isClass: false
+            };
+          };
+
+          const handleQuickAction = (title, sub) => {
+            setBroadcast({ id: Date.now().toString(), btnName: 'Quick', title, subtitle: sub });
+          };
+
+          const handleTravelPublish = (dest) => {
+            setBroadcast({ id: Date.now().toString(), btnName: 'Travel', title: `我在${dest}`, subtitle: '很快就回來' });
+            setIsTravelModalOpen(false);
+          };
+
+          return (
+            <div className="min-h-screen bg-slate-950 text-white relative font-sans">
+              
+              {/* === 新整合的 混合型背景（Bubble + Three.js + MiniMap） === */}
+              <UnifiedBackground />
+              
+              {isSyncing && (
+                <div className="fixed top-4 right-4 z-[100] bg-blue-600/80 backdrop-blur px-3 md:px-4 py-2 rounded-full text-[10px] md:text-xs font-bold animate-pulse flex items-center gap-2">
+                    <i className="fas fa-sync-alt fa-spin"></i>
+                    雲端同步中...
+                </div>
+              )}
+
+              {showCorsWarning && (
+                <div className="fixed top-4 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[100] md:max-w-2xl">
+                  <div className="bg-amber-500/95 backdrop-blur px-4 md:px-6 py-3 rounded-xl md:rounded-2xl shadow-xl border border-amber-400/50 flex items-center gap-3 md:gap-4">
+                    <i className="fas fa-exclamation-triangle text-lg md:text-2xl text-white flex-shrink-0"></i>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs md:text-sm font-bold text-white">⚠️ CORS 警告</div>
+                      <div className="text-[10px] md:text-xs text-amber-100 mt-1 truncate">
+                        建議使用本機伺服器: <code className="bg-black/20 px-1 rounded">python -m http.server 8000</code>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setShowCorsWarning(false)}
+                      className="text-white hover:text-amber-200 transition-colors flex-shrink-0"
+                    >
+                      <i className="fas fa-times text-lg md:text-xl"></i>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 手機版：垂直佈局 */}
+              <div className="block md:hidden">
+                <div className="avatar-box p-4">
+                  <div className="relative group inline-block">
+                      <div className="absolute -inset-1.5 bg-gradient-to-tr from-yellow-600 via-amber-400 to-yellow-200 rounded-full blur-sm opacity-70 group-hover:opacity-100 transition duration-500"></div>
+                      <img src="https://luarnai.github.io/pic/mypic.jpg" alt="Dr. Luarn" className="relative w-24 h-24 rounded-full border-4 border-[#FFD700]/40 shadow-2xl object-cover" />
+                  </div>
+                </div>
+
+                <div className="title-area w-full mt-4">
+                  <div className="flex flex-col items-center justify-center">
+                      <div className="drop-shadow-2xl text-center flex flex-col items-center gap-3">
+                          <span style={{animation: 'pastel-shift 12s ease-in-out infinite', color: '#ffffff'}} className="text-3xl font-black tracking-widest">
+                            欒老師資訊看板
+                          </span>
+                      </div>
+                  </div>
+                </div>
+
+                <main className="relative z-10 flex flex-col min-h-[calc(100vh-300px)]">
+                  <div className="flex-grow flex items-start justify-center p-4">
+                    <MainDisplay 
+                      now={now} 
+                      status={getStatus()} 
+                      broadcast={broadcast} 
+                      onCloseBroadcast={() => setBroadcast(null)} 
+                    />
+                  </div>
+                  
+                  {/* 手機版將行事曆顯示在下方 */}
+                  <div className="px-4 mb-4">
+                    <div className="bg-white/10 rounded-xl p-4">
+                        <h3 className="font-bold mb-2 flex items-center gap-2">
+                           <i className="fas fa-calendar-alt"></i> 近期行程
+                        </h3>
+                        <p className="whitespace-pre-wrap text-sm">{calendarEvents}</p>
+                    </div>
+                  </div>
+
+                  <Toolbar 
+                    onOpenBroadcast={() => setIsBroadcastModalOpen(true)}
+                    onOpenSettings={() => setIsSettingsModalOpen(true)}
+                    onOpenTravel={() => setIsTravelModalOpen(true)}
+                    onQuickAction={handleQuickAction}
+                  />
+                </main>
+              </div>
+
+              {/* 桌面版：原始佈局 */}
+              <div className="hidden md:block">
+                <div className="title-area absolute top-8 left-0 right-0 lg:left-60 lg:right-64 z-20 flex flex-col items-center pointer-events-none">
+                  <div className="flex flex-col items-center">
+                      {/* 頭像 + 合併後的標題 */}
+                      <div className="flex items-center gap-6 drop-shadow-2xl mb-4 pointer-events-auto">
+                          {/* 頭像 */}
+                          <div className="relative group">
+                              <div className="absolute -inset-1.5 bg-gradient-to-tr from-yellow-600 via-amber-400 to-yellow-200 rounded-full blur-sm opacity-70 group-hover:opacity-100 transition duration-500"></div>
+                              <img src="https://luarnai.github.io/pic/mypic.jpg" alt="Dr. Luarn" className="relative w-24 h-24 rounded-full border-4 border-[#FFD700]/40 shadow-2xl object-cover" />
+                          </div>
+                          
+                          {/* 欒老師資訊看板 */}
+                          <span style={{animation: 'pastel-shift 12s ease-in-out infinite', color: '#ffffff'}} className="text-6xl font-black tracking-tight">
+                            欒老師資訊看板
+                          </span>
+                      </div>
+                  </div>
+                </div>
+
+                <main className="relative z-10 h-screen flex flex-col lg:ml-60 lg:mr-64">
+                  <div className="flex-grow flex items-center justify-center p-8">
+                    <MainDisplay 
+                      now={now} 
+                      status={getStatus()} 
+                      broadcast={broadcast} 
+                      onCloseBroadcast={() => setBroadcast(null)} 
+                    />
+                  </div>
+
+                  <Toolbar 
+                    onOpenBroadcast={() => setIsBroadcastModalOpen(true)}
+                    onOpenSettings={() => setIsSettingsModalOpen(true)}
+                    onOpenTravel={() => setIsTravelModalOpen(true)}
+                    onQuickAction={handleQuickAction}
+                  />
+                </main>
+                
+                {/* 左側固定課表 */}
+                <TodaySchedule 
+                  slots={slots}
+                  timetable={timetable}
+                  now={now}
+                />
+                
+                {/* 右側固定行事曆 */}
+                <RightSchedule 
+                  events={calendarEvents}
+                  onRefresh={fetchCalendarEvents}
+                  isRefreshing={isRefreshingCalendar}
+                />
+              </div>
+
+              {isBroadcastModalOpen && (
+                <BroadcastModal 
+                  templates={templates}
+                  onUpdateTemplates={setTemplates}
+                  onPublish={(t) => { setBroadcast(t); setIsBroadcastModalOpen(false); }}
+                  onClose={() => setIsBroadcastModalOpen(false)}
+                />
+              )}
+
+              {isSettingsModalOpen && (
+                <SettingsModal 
+                  slots={slots}
+                  setSlots={setSlots}
+                  timetable={timetable}
+                  setTimetable={setTimetable}
+                  lastSyncTime={lastSyncTime}
+                  onSync={syncWithGoogleSheet}
+                  onClose={() => setIsSettingsModalOpen(false)}
+                />
+              )}
+
+              {isTravelModalOpen && (
+                <TravelModal 
+                  onPublish={handleTravelPublish}
+                  onClose={() => setIsTravelModalOpen(false)}
+                />
+              )}
+            </div>
+          );
+        }
+
+        // Render the app
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</body>
+</html>
